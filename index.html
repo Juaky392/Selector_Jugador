@@ -3,54 +3,61 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#0f172a">
-  <link rel="manifest" href="manifest.json">
   <title>Selector aleatorio de dedos</title>
   <style>
     :root{
       --bg:#0f172a;
-      --panel:#111827ee;
+      --panel:#0b1220ee; /* barra superior */
       --text:#e5e7eb;
-      --dim:#334155; /* slate-700 para jugadores atenuados */
+      --dim:#334155; /* jugadores atenuados */
       --winner:#ef4444; /* rojo ganador */
+      --accent:#38bdf8;
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
     #app{position:fixed;inset:0;touch-action:none;}
     canvas{position:absolute;inset:0;display:block;}
-    .hud{position:absolute;left:50%;top:18px;transform:translateX(-50%);background:var(--panel);
-      border:1px solid #ffffff22;border-radius:16px;padding:10px 14px;backdrop-filter:blur(8px);box-shadow:0 10px 30px #0006;}
-    .row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}
-    .pill{padding:6px 10px;border-radius:999px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:6px}
-    .title{font-weight:700;letter-spacing:.3px}
-    .sub{opacity:.9;font-size:.9rem}
-    .controls{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:10px}
-    button{appearance:none;border:none;background:#38bdf8;color:#0b1220;font-weight:700;padding:8px 12px;border-radius:14px;box-shadow:0 8px 20px #0008;cursor:pointer}
+
+    /* ======= HUD como barra superior de borde a borde ======= */
+    .hud{position:absolute;left:0;right:0;top:0;background:var(--panel);
+      border-bottom:1px solid #ffffff22;padding:10px 12px;backdrop-filter:blur(6px);
+      display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+    .brand .title{font-weight:700;letter-spacing:.2px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
+    .timer{display:flex;align-items:center;gap:6px}
+    .timer button{min-width:36px;min-height:32px}
+
+    .controls{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;z-index:5}
+    button{appearance:none;border:none;background:var(--accent);color:#0b1220;font-weight:700;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px #0008;cursor:pointer}
     button.secondary{background:#111827;color:#e5e7eb;border:1px solid #ffffff22}
-    button:disabled{opacity:.5}
-    .toast{position:absolute;right:18px;bottom:18px;background:var(--panel);border:1px solid #ffffff22;border-radius:12px;padding:10px 14px;max-width:70vw}
+    button:disabled{opacity:.55}
+
+    .toast{position:absolute;right:12px;bottom:16px;background:var(--panel);border:1px solid #ffffff22;border-radius:10px;padding:8px 12px;max-width:70vw;z-index:15}
   </style>
 </head>
 <body>
   <div id="app">
     <canvas id="scene"></canvas>
+
+    <!-- HUD superior -->
     <div class="hud">
-      <div class="row">
+      <div class="brand">
         <div class="title">Selector aleatorio de dedos</div>
         <div class="pill" id="status">Esperando toques…</div>
-        <div class="pill" id="timer">
-          ⏱️ <span id="timeVal">5.0s</span>
-          <button id="btnMinus" title="-1s">-</button>
-          <button id="btnPlus" title="+1s">+</button>
-        </div>
       </div>
-      <div class="sub" style="text-align:center;margin-top:6px">
-        Pon un dedo en la pantalla. Cuando alguien toque, empieza la cuenta. Al terminar, se hará la selección visible durante ~5s.
+      <div class="pill timer" id="timer">
+        ⏱️ <span id="timeVal">5.0s</span>
+        <button id="btnMinus" title="-1s">−</button>
+        <button id="btnPlus" title="+1s">+</button>
       </div>
     </div>
+
     <div class="controls">
       <button id="btnStart" class="secondary">Forzar inicio</button>
       <button id="btnReset">Reiniciar</button>
     </div>
+
     <div class="toast" id="toast" style="display:none"></div>
   </div>
 
@@ -80,17 +87,15 @@
     let countdownActive = false;
     let countdownHandle = null;
 
-    // Efecto de selección (ruleta)
-    const chooseDurationMs = 5000; // al menos 5s
-    const chooseStepMs = 120;      // velocidad de avance
+    const chooseDurationMs = 5000; // ~5s ruleta
+    const chooseStepMs = 120;
     let chooseHandle = null;
     let chooseTimeout = null;
     let lockedIds = [];
-    let highlightIndex = -1; // índice actual en lockedIds
+    let highlightIndex = -1;
 
     let winnerId = null;
 
-    // confeti
     let particles = [];
 
     function resize(){
@@ -107,7 +112,7 @@
     function showToast(msg){
       toastEl.textContent = msg; toastEl.style.display='block';
       clearTimeout(showToast._t);
-      showToast._t = setTimeout(()=> toastEl.style.display='none', 2500);
+      showToast._t = setTimeout(()=> toastEl.style.display='none', 2200);
     }
 
     function updateStatus(){
@@ -138,38 +143,25 @@
 
     // -------- Choosing effect ---------
     function startChoosingEffect(){
-      // Fijar jugadores que siguen tocando justo al cierre
       lockedIds = Array.from(touches.keys());
       if (lockedIds.length === 0){ showToast('No hay jugadores'); resetAll(); return; }
       state = S_CHOOSING; updateStatus();
       highlightIndex = -1;
-
-      // Animación: ir resaltando uno por uno
       chooseHandle = setInterval(()=>{
         if (lockedIds.length === 0) return;
         highlightIndex = (highlightIndex + 1) % lockedIds.length;
       }, chooseStepMs);
-
-      // Mantener al menos 5s y luego decidir ganador
-      chooseTimeout = setTimeout(()=>{
-        finishAndPickWinner();
-      }, chooseDurationMs);
+      chooseTimeout = setTimeout(()=>{ finishAndPickWinner(); }, chooseDurationMs);
     }
 
     function finishAndPickWinner(){
       clearInterval(chooseHandle); chooseHandle=null;
       clearTimeout(chooseTimeout); chooseTimeout=null;
-
-      // Elegir ganador aleatorio de los fijados
       const idx = Math.floor(Math.random()*lockedIds.length);
       winnerId = lockedIds[idx];
       state = S_FINISHED; updateStatus();
-
-      // Vibración
       if (navigator.vibrate){ try{ navigator.vibrate([80,40,120]); }catch(e){} }
-      // Confeti lento en su posición
-      const w = touches.get(winnerId);
-      if (w){ spawnConfetti(w.x, w.y); }
+      const w = touches.get(winnerId); if (w){ spawnConfetti(w.x, w.y); }
       showToast(`¡Ganador: #${idToNumber.get(winnerId)}! 🎉`);
     }
 
@@ -185,47 +177,31 @@
     // -------- Drawing ---------
     function draw(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // Fondo sutil radial
       const g = ctx.createRadialGradient(innerWidth*0.5, innerHeight*0.4, 50, innerWidth*0.5, innerHeight*0.6, Math.max(innerWidth,innerHeight));
       g.addColorStop(0,'#0b1220'); g.addColorStop(1,'#0a0f1d');
       ctx.fillStyle = g; ctx.fillRect(0,0,innerWidth,innerHeight);
 
       for (const [id, t] of touches){
-        // Tras cerrar, solo mostrar los fijados
         if (state!==S_WAITING && !lockedIds.includes(id)) continue;
         const r = 36;
-        // Sombra
         ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(t.x, t.y+4, r, 0, Math.PI*2); ctx.fillStyle = '#0008'; ctx.fill(); ctx.globalAlpha = 1;
-        // Círculo
         ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2);
-
         let fill;
-        if (state===S_WAITING){
-          fill = t.color; // colores vivos
-        } else if (state===S_CHOOSING){
-          const highlightId = lockedIds[highlightIndex];
-          fill = (id===highlightId) ? t.color : getCssVar('--dim');
-        } else { // FINISHED
-          fill = (id===winnerId) ? getCssVar('--winner') : getCssVar('--dim');
-        }
+        if (state===S_WAITING){ fill = t.color; }
+        else if (state===S_CHOOSING){ const highlightId = lockedIds[highlightIndex]; fill = (id===highlightId) ? t.color : getCssVar('--dim'); }
+        else { fill = (id===winnerId) ? getCssVar('--winner') : getCssVar('--dim'); }
         ctx.fillStyle = fill; ctx.fill();
-        // Borde
         ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff55'; ctx.stroke();
-        // Número centrado
-        ctx.fillStyle = '#fff';
-        ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.fillStyle = '#fff'; ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(idToNumber.get(id) || '?', t.x, t.y);
       }
 
-      // Confeti
       stepParticles();
       requestAnimationFrame(draw);
     }
 
-    function getCssVar(name){
-      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    }
+    function getCssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
     // --- Confeti lento ---
     function spawnConfetti(x, y){
@@ -233,64 +209,42 @@
       for (let i=0;i<count;i++){
         const angle = Math.random()*Math.PI*2;
         const speed = 1 + Math.random()*3;
-        particles.push({
-          x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
-          life: 140 + Math.random()*100, // más vida
-          size: 3 + Math.random()*4,
-          rot: Math.random()*Math.PI,
-          vr: (Math.random()-0.5)*0.2,
-          color: `hsl(${Math.floor(Math.random()*360)},80%,60%)`
-        });
+        particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2, life: 140 + Math.random()*100, size: 3 + Math.random()*4, rot: Math.random()*Math.PI, vr: (Math.random()-0.5)*0.2, color: `hsl(${Math.floor(Math.random()*360)},80%,60%)` });
       }
     }
     function stepParticles(){
       for (let i=particles.length-1;i>=0;i--){
-        const p = particles[i];
-        p.vy += 0.05; // caída lenta
-        p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= 1;
-        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
-        ctx.fillStyle = p.color; ctx.fillRect(-p.size*0.5, -p.size*0.5, p.size, p.size);
-        ctx.restore();
+        const p = particles[i]; p.vy += 0.05; p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= 1;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color; ctx.fillRect(-p.size*0.5, -p.size*0.5, p.size, p.size); ctx.restore();
         if (p.life<=0 || p.y>innerHeight+20) particles.splice(i,1);
       }
     }
 
     // -------- Touch handling ---------
     const app = document.getElementById('app');
-
-    function randomColor(){
-      const hue = Math.floor(Math.random()*360);
-      return `hsl(${hue},70%,50%)`;
-    }
+    function randomColor(){ const hue = Math.floor(Math.random()*360); return `hsl(${hue},70%,50%)`; }
 
     function onTouchStart(ev){
-      // Ignorar toques sobre HUD/controles para que no arranque la cuenta
-      if (ev.target.closest('.hud, .controls, button')) return;
+      if (ev.target.closest('.hud, .controls, button')) return; // ignora toques en UI
       ev.preventDefault();
       const nowFirst = !countdownActive && state===S_WAITING && ev.touches.length>=1 && touches.size===0;
       if (nowFirst) startCountdown();
       for (const t of ev.changedTouches){
-        if (state!==S_WAITING) continue; // no aceptar nuevos tras cerrar
+        if (state!==S_WAITING) continue;
         if (!idToNumber.has(t.identifier)) idToNumber.set(t.identifier, nextNumber++);
         touches.set(t.identifier, {x:t.clientX, y:t.clientY, color:randomColor()});
       }
       updateStatus();
     }
     function onTouchMove(ev){
-      if (ev.target.closest('.hud, .controls, button')) return; // ignorar movimientos en botones
-      ev.preventDefault();
-      if (state!==S_WAITING) return;
-      for (const t of ev.changedTouches){
-        const obj = touches.get(t.identifier);
-        if (obj){ obj.x = t.clientX; obj.y = t.clientY; }
-      }
+      if (ev.target.closest('.hud, .controls, button')) return;
+      ev.preventDefault(); if (state!==S_WAITING) return;
+      for (const t of ev.changedTouches){ const obj = touches.get(t.identifier); if (obj){ obj.x = t.clientX; obj.y = t.clientY; } }
     }
     function onTouchEnd(ev){
       if (ev.target.closest('.hud, .controls, button')) return;
       ev.preventDefault();
-      for (const t of ev.changedTouches){
-        if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); }
-      }
+      for (const t of ev.changedTouches){ if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); } }
       updateStatus();
     }
 
@@ -299,33 +253,22 @@
     app.addEventListener('touchend', onTouchEnd, {passive:false});
     app.addEventListener('touchcancel', onTouchEnd, {passive:false});
 
-    // -------- Buttons ---------
-    btnStart.addEventListener('click', (e)=>{
-      e.stopPropagation();
-      if (state===S_WAITING){ startCountdown(); }
-    });
-    btnReset.addEventListener('click', (e)=>{ e.stopPropagation(); resetAll(); });
-
+    // -------- Botones (usar Pointer para móvil y desktop) ---------
     function adjTime(delta){
       countdownDuration = Math.max(1, Math.min(60, countdownDuration + delta));
-      timerText.textContent = `${countdownDuration.toFixed(1)}s`;
+      if (!countdownActive) timerText.textContent = `${countdownDuration.toFixed(1)}s`;
     }
-    // Evitar que los botones disparen toques del app
-    for (const el of [btnMinus, btnPlus]){
-      el.addEventListener('touchstart', (e)=>{ e.stopPropagation(); e.preventDefault(); });
+    function bindPointer(btn, delta){
+      btn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); adjTime(delta); });
     }
-    btnMinus.addEventListener('click', (e)=>{ e.stopPropagation(); adjTime(-1); });
-    btnPlus.addEventListener('click', (e)=>{ e.stopPropagation(); adjTime(+1); });
+    bindPointer(btnMinus, -1);
+    bindPointer(btnPlus, +1);
+
+    btnStart.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); if (state===S_WAITING){ startCountdown(); } });
+    btnReset.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); resetAll(); });
 
     updateStatus(); draw();
   })();
   </script>
-<script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js?v=3')  <!-- ⬅️ mismo número que VERSION -->
-      .then(() => console.log('SW registrado'))
-      .catch(err => console.error('Error registrando SW', err));
-  }
-</script>
 </body>
 </html>
