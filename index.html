@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <title>Selector aleatorio de dedos</title>
+  <!-- PWA / iOS -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="icon-512.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <style>
     :root{
       --bg:#0f172a;
@@ -23,7 +29,6 @@
       display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10}
     .brand{display:flex;align-items:center;gap:10px;font-weight:700}
     .brand .title{font-weight:700;letter-spacing:.2px}
-    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
     .timer{display:flex;align-items:center;gap:6px}
     .timer button{min-width:36px;min-height:32px}
@@ -31,6 +36,7 @@
     .controls{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;z-index:5}
     button{appearance:none;border:none;background:var(--accent);color:#0b1220;font-weight:700;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px #0008;cursor:pointer}
     button.secondary{background:#111827;color:#e5e7eb;border:1px solid #ffffff22}
+    button.ghost{background:transparent;color:#e5e7eb;border:1px solid #ffffff22}
     button:disabled{opacity:.55}
 
     .toast{position:absolute;right:12px;bottom:16px;background:var(--panel);border:1px solid #ffffff22;border-radius:10px;padding:8px 12px;max-width:70vw;z-index:15}
@@ -46,10 +52,13 @@
         <div class="title">Selector aleatorio de dedos</div>
         <div class="pill" id="status">Esperando toques…</div>
       </div>
-      <div class="pill timer" id="timer">
-        ⏱️ <span id="timeVal">5.0s</span>
-        <button id="btnMinus" title="-1s">−</button>
-        <button id="btnPlus" title="+1s">+</button>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="btnInstall" class="ghost" style="display:none">Instalar</button>
+        <div class="pill timer" id="timer">
+          ⏱️ <span id="timeVal">5.0s</span>
+          <button id="btnMinus" title="-1s">−</button>
+          <button id="btnPlus" title="+1s">+</button>
+        </div>
       </div>
     </div>
 
@@ -63,6 +72,13 @@
 
   <script>
   (function(){
+    // ===== Service Worker (versionar para forzar actualización de caché) =====
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js?v=5')
+        .then(()=>console.log('SW registrado'))
+        .catch(err=>console.error('SW error', err));
+    }
+
     const canvas = document.getElementById('scene');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
@@ -72,6 +88,7 @@
     const btnReset = document.getElementById('btnReset');
     const btnMinus = document.getElementById('btnMinus');
     const btnPlus = document.getElementById('btnPlus');
+    const btnInstall = document.getElementById('btnInstall');
 
     const S_WAITING = 'waiting';
     const S_CHOOSING = 'choosing';
@@ -253,7 +270,7 @@
     app.addEventListener('touchend', onTouchEnd, {passive:false});
     app.addEventListener('touchcancel', onTouchEnd, {passive:false});
 
-    // -------- Botones (usar Pointer para móvil y desktop) ---------
+    // -------- Botones (Pointer Events) ---------
     function adjTime(delta){
       countdownDuration = Math.max(1, Math.min(60, countdownDuration + delta));
       if (!countdownActive) timerText.textContent = `${countdownDuration.toFixed(1)}s`;
@@ -266,6 +283,31 @@
 
     btnStart.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); if (state===S_WAITING){ startCountdown(); } });
     btnReset.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); resetAll(); });
+
+    // -------- Instalación (beforeinstallprompt) ---------
+    let deferredPrompt = null;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+    window.addEventListener('beforeinstallprompt', (e)=>{
+      e.preventDefault();
+      deferredPrompt = e;
+      if (!isStandalone) btnInstall.style.display = 'inline-flex';
+    });
+
+    btnInstall.addEventListener('pointerdown', async (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const res = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      btnInstall.style.display = 'none';
+      if (res && res.outcome === 'accepted'){ showToast('Instalación iniciada ✅'); }
+    });
+
+    window.addEventListener('appinstalled', ()=>{
+      showToast('App instalada ✅');
+      btnInstall.style.display = 'none';
+    });
 
     updateStatus(); draw();
   })();
