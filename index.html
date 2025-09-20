@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0f172a">
   <link rel="manifest" href="manifest.json">
-  <title>Selector aleatorio de Jugadores</title>
+  <title>Selector aleatorio de dedos</title>
   <style>
     :root{
       --bg:#0f172a;
       --panel:#111827ee;
       --text:#e5e7eb;
-      --winner:#ef4444;
+      --dim:#334155; /* slate-700 para jugadores atenuados */
+      --winner:#ef4444; /* rojo ganador */
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
     #app{position:fixed;inset:0;touch-action:none;}
@@ -27,8 +28,6 @@
     button.secondary{background:#111827;color:#e5e7eb;border:1px solid #ffffff22}
     button:disabled{opacity:.5}
     .toast{position:absolute;right:18px;bottom:18px;background:var(--panel);border:1px solid #ffffff22;border-radius:12px;padding:10px 14px;max-width:70vw}
-    .legend{position:absolute;left:18px;bottom:18px;display:flex;gap:10px;flex-wrap:wrap}
-    .dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:6px}
   </style>
 </head>
 <body>
@@ -40,21 +39,17 @@
         <div class="pill" id="status">Esperando toques…</div>
         <div class="pill" id="timer">
           ⏱️ <span id="timeVal">5.0s</span>
-          <button id="btnMinus">-</button>
-          <button id="btnPlus">+</button>
+          <button id="btnMinus" title="-1s">-</button>
+          <button id="btnPlus" title="+1s">+</button>
         </div>
       </div>
       <div class="sub" style="text-align:center;margin-top:6px">
-        Pon un dedo en la pantalla. En cuanto alguien toque, hay X segundos para unirse.
+        Pon un dedo en la pantalla. Cuando alguien toque, empieza la cuenta. Al terminar, se hará la selección visible durante ~5s.
       </div>
     </div>
     <div class="controls">
       <button id="btnStart" class="secondary">Forzar inicio</button>
       <button id="btnReset">Reiniciar</button>
-    </div>
-    <div class="legend">
-      <span><i class="dot" style="background:#38bdf8"></i>Jugadores</span>
-      <span><i class="dot" style="background:var(--winner)"></i>Ganador</span>
     </div>
     <div class="toast" id="toast" style="display:none"></div>
   </div>
@@ -64,7 +59,7 @@
     const canvas = document.getElementById('scene');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
-    const timerEl = document.getElementById('timeVal');
+    const timerText = document.getElementById('timeVal');
     const toastEl = document.getElementById('toast');
     const btnStart = document.getElementById('btnStart');
     const btnReset = document.getElementById('btnReset');
@@ -72,21 +67,30 @@
     const btnPlus = document.getElementById('btnPlus');
 
     const S_WAITING = 'waiting';
-    const S_LOCKED = 'locked';
+    const S_CHOOSING = 'choosing';
     const S_FINISHED = 'finished';
 
     let state = S_WAITING;
-    let touches = new Map(); // id -> {x,y,alive:true,number,color}
+    let touches = new Map(); // id -> {x,y,color,number}
     let idToNumber = new Map();
     let nextNumber = 1;
-    let countdown = 5.0;
+
     let countdownDuration = 5.0;
+    let countdown = countdownDuration;
     let countdownActive = false;
     let countdownHandle = null;
+
+    // Efecto de selección (ruleta)
+    const chooseDurationMs = 5000; // al menos 5s
+    const chooseStepMs = 120;      // velocidad de avance
+    let chooseHandle = null;
+    let chooseTimeout = null;
     let lockedIds = [];
+    let highlightIndex = -1; // índice actual en lockedIds
+
     let winnerId = null;
 
-    // confetti
+    // confeti
     let particles = [];
 
     function resize(){
@@ -110,56 +114,75 @@
       const total = touches.size;
       const map = {
         [S_WAITING]: `Esperando toques… (${total})`,
-        [S_LOCKED]: `Jugadores fijados: ${lockedIds.length}`,
+        [S_CHOOSING]: `Eligiendo…`,
         [S_FINISHED]: winnerId!=null? `Ganador: #${idToNumber.get(winnerId)}` : `Finalizado`,
       };
       statusEl.textContent = map[state];
     }
 
+    // -------- Countdown ---------
     function startCountdown(){
       if (countdownActive) return;
       countdownActive = true;
       countdown = countdownDuration;
-      timerEl.textContent = `${countdown.toFixed(1)}s`;
+      timerText.textContent = `${countdown.toFixed(1)}s`;
       countdownHandle = setInterval(()=>{
         countdown = Math.max(0, countdown - 0.1);
-        timerEl.textContent = `${countdown.toFixed(1)}s`;
+        timerText.textContent = `${countdown.toFixed(1)}s`;
         if (countdown <= 0){
-          clearInterval(countdownHandle);
-          countdownActive = false;
-          lockAndPickWinner();
+          clearInterval(countdownHandle); countdownActive = false;
+          startChoosingEffect();
         }
       }, 100);
     }
 
-    function lockAndPickWinner(){
-      if (state !== S_WAITING) return;
+    // -------- Choosing effect ---------
+    function startChoosingEffect(){
+      // Fijar jugadores que siguen tocando justo al cierre
       lockedIds = Array.from(touches.keys());
-      if (lockedIds.length === 0){
-        showToast('No hay jugadores. Toca la pantalla para empezar.');
-        state = S_WAITING; updateStatus(); return;
-      }
-      state = S_LOCKED; updateStatus();
-      // Elegir ganador aleatorio entre los que siguen tocando
-      const idx = Math.floor(Math.random() * lockedIds.length);
+      if (lockedIds.length === 0){ showToast('No hay jugadores'); resetAll(); return; }
+      state = S_CHOOSING; updateStatus();
+      highlightIndex = -1;
+
+      // Animación: ir resaltando uno por uno
+      chooseHandle = setInterval(()=>{
+        if (lockedIds.length === 0) return;
+        highlightIndex = (highlightIndex + 1) % lockedIds.length;
+      }, chooseStepMs);
+
+      // Mantener al menos 5s y luego decidir ganador
+      chooseTimeout = setTimeout(()=>{
+        finishAndPickWinner();
+      }, chooseDurationMs);
+    }
+
+    function finishAndPickWinner(){
+      clearInterval(chooseHandle); chooseHandle=null;
+      clearTimeout(chooseTimeout); chooseTimeout=null;
+
+      // Elegir ganador aleatorio de los fijados
+      const idx = Math.floor(Math.random()*lockedIds.length);
       winnerId = lockedIds[idx];
       state = S_FINISHED; updateStatus();
-      // Vibrar
-      if (navigator.vibrate){ try{ navigator.vibrate([80, 40, 120]); }catch(e){} }
-      // Confeti lento
+
+      // Vibración
+      if (navigator.vibrate){ try{ navigator.vibrate([80,40,120]); }catch(e){} }
+      // Confeti lento en su posición
       const w = touches.get(winnerId);
       if (w){ spawnConfetti(w.x, w.y); }
       showToast(`¡Ganador: #${idToNumber.get(winnerId)}! 🎉`);
     }
 
+    // -------- Reset ---------
     function resetAll(){
       clearInterval(countdownHandle); countdownHandle=null; countdownActive=false;
-      touches.clear(); lockedIds = []; idToNumber.clear(); nextNumber = 1; winnerId = null; particles = [];
+      clearInterval(chooseHandle); chooseHandle=null; clearTimeout(chooseTimeout); chooseTimeout=null;
+      touches.clear(); idToNumber.clear(); nextNumber=1; lockedIds=[]; highlightIndex=-1; winnerId=null; particles=[];
       state = S_WAITING; updateStatus();
-      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
-      showToast('Reiniciado');
+      timerText.textContent = `${countdownDuration.toFixed(1)}s`;
     }
 
+    // -------- Drawing ---------
     function draw(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       // Fondo sutil radial
@@ -167,26 +190,36 @@
       g.addColorStop(0,'#0b1220'); g.addColorStop(1,'#0a0f1d');
       ctx.fillStyle = g; ctx.fillRect(0,0,innerWidth,innerHeight);
 
-      // Dibujar toques
       for (const [id, t] of touches){
+        // Tras cerrar, solo mostrar los fijados
         if (state!==S_WAITING && !lockedIds.includes(id)) continue;
         const r = 36;
+        // Sombra
         ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(t.x, t.y+4, r, 0, Math.PI*2); ctx.fillStyle = '#0008'; ctx.fill(); ctx.globalAlpha = 1;
+        // Círculo
         ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2);
-        const isWinner = (state===S_FINISHED && id===winnerId);
-        ctx.fillStyle = isWinner ? getCssVar('--winner') : t.color;
-        ctx.fill();
+
+        let fill;
+        if (state===S_WAITING){
+          fill = t.color; // colores vivos
+        } else if (state===S_CHOOSING){
+          const highlightId = lockedIds[highlightIndex];
+          fill = (id===highlightId) ? t.color : getCssVar('--dim');
+        } else { // FINISHED
+          fill = (id===winnerId) ? getCssVar('--winner') : getCssVar('--dim');
+        }
+        ctx.fillStyle = fill; ctx.fill();
+        // Borde
         ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff55'; ctx.stroke();
+        // Número centrado
         ctx.fillStyle = '#fff';
         ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const num = idToNumber.get(id) || '?';
-        ctx.fillText(num, t.x, t.y);
+        ctx.fillText(idToNumber.get(id) || '?', t.x, t.y);
       }
 
-      // Partículas (confeti)
+      // Confeti
       stepParticles();
-
       requestAnimationFrame(draw);
     }
 
@@ -196,13 +229,13 @@
 
     // --- Confeti lento ---
     function spawnConfetti(x, y){
-      const count = 150;
+      const count = 160;
       for (let i=0;i<count;i++){
         const angle = Math.random()*Math.PI*2;
-        const speed = 1 + Math.random()*3; // más lento
+        const speed = 1 + Math.random()*3;
         particles.push({
           x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
-          life: 120 + Math.random()*80,
+          life: 140 + Math.random()*100, // más vida
           size: 3 + Math.random()*4,
           rot: Math.random()*Math.PI,
           vr: (Math.random()-0.5)*0.2,
@@ -213,35 +246,38 @@
     function stepParticles(){
       for (let i=particles.length-1;i>=0;i--){
         const p = particles[i];
-        p.vy += 0.05; // gravedad más lenta
+        p.vy += 0.05; // caída lenta
         p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= 1;
-        ctx.save();
-        ctx.translate(p.x, p.y); ctx.rotate(p.rot);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.size*0.5, -p.size*0.5, p.size, p.size);
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillStyle = p.color; ctx.fillRect(-p.size*0.5, -p.size*0.5, p.size, p.size);
         ctx.restore();
         if (p.life<=0 || p.y>innerHeight+20) particles.splice(i,1);
       }
     }
 
-    // --- Touch handling ---
+    // -------- Touch handling ---------
     const app = document.getElementById('app');
+
     function randomColor(){
       const hue = Math.floor(Math.random()*360);
       return `hsl(${hue},70%,50%)`;
     }
+
     function onTouchStart(ev){
+      // Ignorar toques sobre HUD/controles para que no arranque la cuenta
+      if (ev.target.closest('.hud, .controls, button')) return;
       ev.preventDefault();
       const nowFirst = !countdownActive && state===S_WAITING && ev.touches.length>=1 && touches.size===0;
       if (nowFirst) startCountdown();
       for (const t of ev.changedTouches){
-        if (state!==S_WAITING) continue;
+        if (state!==S_WAITING) continue; // no aceptar nuevos tras cerrar
         if (!idToNumber.has(t.identifier)) idToNumber.set(t.identifier, nextNumber++);
-        touches.set(t.identifier, {x:t.clientX, y:t.clientY, alive:true, color:randomColor()});
+        touches.set(t.identifier, {x:t.clientX, y:t.clientY, color:randomColor()});
       }
       updateStatus();
     }
     function onTouchMove(ev){
+      if (ev.target.closest('.hud, .controls, button')) return; // ignorar movimientos en botones
       ev.preventDefault();
       if (state!==S_WAITING) return;
       for (const t of ev.changedTouches){
@@ -250,40 +286,46 @@
       }
     }
     function onTouchEnd(ev){
+      if (ev.target.closest('.hud, .controls, button')) return;
       ev.preventDefault();
       for (const t of ev.changedTouches){
         if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); }
       }
       updateStatus();
     }
+
     app.addEventListener('touchstart', onTouchStart, {passive:false});
     app.addEventListener('touchmove', onTouchMove, {passive:false});
     app.addEventListener('touchend', onTouchEnd, {passive:false});
     app.addEventListener('touchcancel', onTouchEnd, {passive:false});
 
-    // Buttons
-    btnStart.addEventListener('click', ()=>{
+    // -------- Buttons ---------
+    btnStart.addEventListener('click', (e)=>{
+      e.stopPropagation();
       if (state===S_WAITING){ startCountdown(); }
     });
-    btnReset.addEventListener('click', resetAll);
-    btnMinus.addEventListener('click', ()=>{
-      countdownDuration = Math.max(1, countdownDuration-1);
-      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
-    });
-    btnPlus.addEventListener('click', ()=>{
-      countdownDuration = countdownDuration+1;
-      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
-    });
+    btnReset.addEventListener('click', (e)=>{ e.stopPropagation(); resetAll(); });
+
+    function adjTime(delta){
+      countdownDuration = Math.max(1, Math.min(60, countdownDuration + delta));
+      timerText.textContent = `${countdownDuration.toFixed(1)}s`;
+    }
+    // Evitar que los botones disparen toques del app
+    for (const el of [btnMinus, btnPlus]){
+      el.addEventListener('touchstart', (e)=>{ e.stopPropagation(); e.preventDefault(); });
+    }
+    btnMinus.addEventListener('click', (e)=>{ e.stopPropagation(); adjTime(-1); });
+    btnPlus.addEventListener('click', (e)=>{ e.stopPropagation(); adjTime(+1); });
 
     updateStatus(); draw();
   })();
   </script>
- <script>
+  <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js')
       .then(() => console.log('Service Worker registrado'))
       .catch(err => console.error('Error registrando Service Worker', err));
   }
 </script>
- </body>
+</body>
 </html>
