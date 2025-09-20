@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.json">
+  <title>Selector aleatorio de Jugadores</title>
+  <style>
+    :root{
+      --bg:#0f172a;
+      --panel:#111827ee;
+      --text:#e5e7eb;
+      --winner:#ef4444;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
+    #app{position:fixed;inset:0;touch-action:none;}
+    canvas{position:absolute;inset:0;display:block;}
+    .hud{position:absolute;left:50%;top:18px;transform:translateX(-50%);background:var(--panel);
+      border:1px solid #ffffff22;border-radius:16px;padding:10px 14px;backdrop-filter:blur(8px);box-shadow:0 10px 30px #0006;}
+    .row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}
+    .pill{padding:6px 10px;border-radius:999px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:6px}
+    .title{font-weight:700;letter-spacing:.3px}
+    .sub{opacity:.9;font-size:.9rem}
+    .controls{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:10px}
+    button{appearance:none;border:none;background:#38bdf8;color:#0b1220;font-weight:700;padding:8px 12px;border-radius:14px;box-shadow:0 8px 20px #0008;cursor:pointer}
+    button.secondary{background:#111827;color:#e5e7eb;border:1px solid #ffffff22}
+    button:disabled{opacity:.5}
+    .toast{position:absolute;right:18px;bottom:18px;background:var(--panel);border:1px solid #ffffff22;border-radius:12px;padding:10px 14px;max-width:70vw}
+    .legend{position:absolute;left:18px;bottom:18px;display:flex;gap:10px;flex-wrap:wrap}
+    .dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:6px}
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+    <div class="hud">
+      <div class="row">
+        <div class="title">Selector aleatorio de dedos</div>
+        <div class="pill" id="status">Esperando toques…</div>
+        <div class="pill" id="timer">
+          ⏱️ <span id="timeVal">5.0s</span>
+          <button id="btnMinus">-</button>
+          <button id="btnPlus">+</button>
+        </div>
+      </div>
+      <div class="sub" style="text-align:center;margin-top:6px">
+        Pon un dedo en la pantalla. En cuanto alguien toque, hay X segundos para unirse.
+      </div>
+    </div>
+    <div class="controls">
+      <button id="btnStart" class="secondary">Forzar inicio</button>
+      <button id="btnReset">Reiniciar</button>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:#38bdf8"></i>Jugadores</span>
+      <span><i class="dot" style="background:var(--winner)"></i>Ganador</span>
+    </div>
+    <div class="toast" id="toast" style="display:none"></div>
+  </div>
+
+  <script>
+  (function(){
+    const canvas = document.getElementById('scene');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const timerEl = document.getElementById('timeVal');
+    const toastEl = document.getElementById('toast');
+    const btnStart = document.getElementById('btnStart');
+    const btnReset = document.getElementById('btnReset');
+    const btnMinus = document.getElementById('btnMinus');
+    const btnPlus = document.getElementById('btnPlus');
+
+    const S_WAITING = 'waiting';
+    const S_LOCKED = 'locked';
+    const S_FINISHED = 'finished';
+
+    let state = S_WAITING;
+    let touches = new Map(); // id -> {x,y,alive:true,number,color}
+    let idToNumber = new Map();
+    let nextNumber = 1;
+    let countdown = 5.0;
+    let countdownDuration = 5.0;
+    let countdownActive = false;
+    let countdownHandle = null;
+    let lockedIds = [];
+    let winnerId = null;
+
+    // confetti
+    let particles = [];
+
+    function resize(){
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = innerWidth + 'px';
+      canvas.style.height = innerHeight + 'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function showToast(msg){
+      toastEl.textContent = msg; toastEl.style.display='block';
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(()=> toastEl.style.display='none', 2500);
+    }
+
+    function updateStatus(){
+      const total = touches.size;
+      const map = {
+        [S_WAITING]: `Esperando toques… (${total})`,
+        [S_LOCKED]: `Jugadores fijados: ${lockedIds.length}`,
+        [S_FINISHED]: winnerId!=null? `Ganador: #${idToNumber.get(winnerId)}` : `Finalizado`,
+      };
+      statusEl.textContent = map[state];
+    }
+
+    function startCountdown(){
+      if (countdownActive) return;
+      countdownActive = true;
+      countdown = countdownDuration;
+      timerEl.textContent = `${countdown.toFixed(1)}s`;
+      countdownHandle = setInterval(()=>{
+        countdown = Math.max(0, countdown - 0.1);
+        timerEl.textContent = `${countdown.toFixed(1)}s`;
+        if (countdown <= 0){
+          clearInterval(countdownHandle);
+          countdownActive = false;
+          lockAndPickWinner();
+        }
+      }, 100);
+    }
+
+    function lockAndPickWinner(){
+      if (state !== S_WAITING) return;
+      lockedIds = Array.from(touches.keys());
+      if (lockedIds.length === 0){
+        showToast('No hay jugadores. Toca la pantalla para empezar.');
+        state = S_WAITING; updateStatus(); return;
+      }
+      state = S_LOCKED; updateStatus();
+      // Elegir ganador aleatorio entre los que siguen tocando
+      const idx = Math.floor(Math.random() * lockedIds.length);
+      winnerId = lockedIds[idx];
+      state = S_FINISHED; updateStatus();
+      // Vibrar
+      if (navigator.vibrate){ try{ navigator.vibrate([80, 40, 120]); }catch(e){} }
+      // Confeti lento
+      const w = touches.get(winnerId);
+      if (w){ spawnConfetti(w.x, w.y); }
+      showToast(`¡Ganador: #${idToNumber.get(winnerId)}! 🎉`);
+    }
+
+    function resetAll(){
+      clearInterval(countdownHandle); countdownHandle=null; countdownActive=false;
+      touches.clear(); lockedIds = []; idToNumber.clear(); nextNumber = 1; winnerId = null; particles = [];
+      state = S_WAITING; updateStatus();
+      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
+      showToast('Reiniciado');
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // Fondo sutil radial
+      const g = ctx.createRadialGradient(innerWidth*0.5, innerHeight*0.4, 50, innerWidth*0.5, innerHeight*0.6, Math.max(innerWidth,innerHeight));
+      g.addColorStop(0,'#0b1220'); g.addColorStop(1,'#0a0f1d');
+      ctx.fillStyle = g; ctx.fillRect(0,0,innerWidth,innerHeight);
+
+      // Dibujar toques
+      for (const [id, t] of touches){
+        if (state!==S_WAITING && !lockedIds.includes(id)) continue;
+        const r = 36;
+        ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(t.x, t.y+4, r, 0, Math.PI*2); ctx.fillStyle = '#0008'; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2);
+        const isWinner = (state===S_FINISHED && id===winnerId);
+        ctx.fillStyle = isWinner ? getCssVar('--winner') : t.color;
+        ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff55'; ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const num = idToNumber.get(id) || '?';
+        ctx.fillText(num, t.x, t.y);
+      }
+
+      // Partículas (confeti)
+      stepParticles();
+
+      requestAnimationFrame(draw);
+    }
+
+    function getCssVar(name){
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    // --- Confeti lento ---
+    function spawnConfetti(x, y){
+      const count = 150;
+      for (let i=0;i<count;i++){
+        const angle = Math.random()*Math.PI*2;
+        const speed = 1 + Math.random()*3; // más lento
+        particles.push({
+          x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
+          life: 120 + Math.random()*80,
+          size: 3 + Math.random()*4,
+          rot: Math.random()*Math.PI,
+          vr: (Math.random()-0.5)*0.2,
+          color: `hsl(${Math.floor(Math.random()*360)},80%,60%)`
+        });
+      }
+    }
+    function stepParticles(){
+      for (let i=particles.length-1;i>=0;i--){
+        const p = particles[i];
+        p.vy += 0.05; // gravedad más lenta
+        p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= 1;
+        ctx.save();
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size*0.5, -p.size*0.5, p.size, p.size);
+        ctx.restore();
+        if (p.life<=0 || p.y>innerHeight+20) particles.splice(i,1);
+      }
+    }
+
+    // --- Touch handling ---
+    const app = document.getElementById('app');
+    function randomColor(){
+      const hue = Math.floor(Math.random()*360);
+      return `hsl(${hue},70%,50%)`;
+    }
+    function onTouchStart(ev){
+      ev.preventDefault();
+      const nowFirst = !countdownActive && state===S_WAITING && ev.touches.length>=1 && touches.size===0;
+      if (nowFirst) startCountdown();
+      for (const t of ev.changedTouches){
+        if (state!==S_WAITING) continue;
+        if (!idToNumber.has(t.identifier)) idToNumber.set(t.identifier, nextNumber++);
+        touches.set(t.identifier, {x:t.clientX, y:t.clientY, alive:true, color:randomColor()});
+      }
+      updateStatus();
+    }
+    function onTouchMove(ev){
+      ev.preventDefault();
+      if (state!==S_WAITING) return;
+      for (const t of ev.changedTouches){
+        const obj = touches.get(t.identifier);
+        if (obj){ obj.x = t.clientX; obj.y = t.clientY; }
+      }
+    }
+    function onTouchEnd(ev){
+      ev.preventDefault();
+      for (const t of ev.changedTouches){
+        if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); }
+      }
+      updateStatus();
+    }
+    app.addEventListener('touchstart', onTouchStart, {passive:false});
+    app.addEventListener('touchmove', onTouchMove, {passive:false});
+    app.addEventListener('touchend', onTouchEnd, {passive:false});
+    app.addEventListener('touchcancel', onTouchEnd, {passive:false});
+
+    // Buttons
+    btnStart.addEventListener('click', ()=>{
+      if (state===S_WAITING){ startCountdown(); }
+    });
+    btnReset.addEventListener('click', resetAll);
+    btnMinus.addEventListener('click', ()=>{
+      countdownDuration = Math.max(1, countdownDuration-1);
+      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
+    });
+    btnPlus.addEventListener('click', ()=>{
+      countdownDuration = countdownDuration+1;
+      timerEl.textContent = `${countdownDuration.toFixed(1)}s`;
+    });
+
+    updateStatus(); draw();
+  })();
+  </script>
+ <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('service-worker.js')
+      .then(() => console.log('Service Worker registrado'))
+      .catch(err => console.error('Error registrando Service Worker', err));
+  }
+</script>
+ </body>
+</html>
