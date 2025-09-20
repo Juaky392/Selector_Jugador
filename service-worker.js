@@ -1,5 +1,5 @@
 // service-worker.js
-const VERSION = "v3";                     // ⬅️ súbelo cuando hagas cambios
+const VERSION = "v5";                     // ⬅️ súbelo cuando hagas cambios
 const CACHE_NAME = `dedos-cache-${VERSION}`;
 const CORE = [
   "./",
