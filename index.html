@@ -26,24 +26,17 @@
     /* ======= HUD como barra superior de borde a borde ======= */
     .hud{position:absolute;left:0;right:0;top:0;background:var(--panel);
       border-bottom:1px solid #ffffff22;padding:10px 12px;backdrop-filter:blur(6px);
-      display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10}
+      display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:10px}
+    .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
+    .timer{display:flex;align-items:center;gap:6px}
+    .timer button{min-width:36px;min-height:32px}
+    .audio{display:flex;align-items:center;gap:6px}
+    .audio input[type="range"]{width:80px}
+    .hud-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+    /* Título fuera del HUD */
     .titlebar{position:absolute;left:0;right:0;top:52px;text-align:center;padding:6px 8px;font-weight:700;opacity:.95;z-index:9}
-    .brand{display:flex;align-items:center;gap:10px;font-weight:700}
-    .brand .title{display:none} /* se oculta el título del HUD */
-    .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
-    .timer{display:flex;align-items:center;gap:6px}
-    .timer button{min-width:36px;min-height:32px}
-    .audio{display:flex;align-items:center;gap:6px}
-    .audio input[type="range"]{width:80px}
-    .hud-right{display:flex;align-items:center;gap:10px}
-    .brand{display:flex;align-items:center;gap:10px;font-weight:700}
-    .brand .title{font-weight:700;letter-spacing:.2px}
-    .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
-    .timer{display:flex;align-items:center;gap:6px}
-    .timer button{min-width:36px;min-height:32px}
-    .audio{display:flex;align-items:center;gap:6px}
-    .audio input[type="range"]{width:80px}
-    .hud-right{display:flex;align-items:center;gap:10px}
 
     .controls{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;z-index:5}
     button{appearance:none;border:none;background:var(--accent);color:#0b1220;font-weight:700;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px #0008;cursor:pointer}
@@ -58,15 +51,13 @@
   <div id="app">
     <canvas id="scene"></canvas>
 
-    <!-- HUD superior -->
+    <!-- HUD superior (solo botones y contador) -->
     <div class="hud">
       <div class="brand">
         <div class="pill" id="status">Esperando toques…</div>
       </div>
-        <div class="pill" id="status">Esperando toques…</div>
-      </div>
       <div class="hud-right">
-        <button id="btnInstall" class="ghost" style="display:none">Instalar</button>
+        <button id="btnInstall" class="ghost">Instalar</button>
         <button id="btnShare" class="ghost">Compartir</button>
         <div class="pill audio">
           <button id="btnSound" title="Sonido">🔊</button>
@@ -100,7 +91,7 @@
 
   <script>
   (function(){
-    // ===== Service Worker (versionar para forzar actualización de caché) =====
+    // ===== Service Worker (sube el número para forzar actualización de caché) =====
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js?v=7')
         .then(()=>console.log('SW registrado'))
@@ -180,10 +171,7 @@
       osc.stop(now + ms/1000);
     }
     function playTick(){ playTone(800, 60, 0.35); }
-    function playWin(){
-      playTone(520, 160, 0.9);
-      setTimeout(()=> playTone(880, 220, 1.0), 160);
-    }
+    function playWin(){ playTone(520, 160, 0.9); setTimeout(()=> playTone(880, 220, 1.0), 160); }
     function getVibePattern(){
       if (!vibrationEnabled || !('vibrate' in navigator)) return null;
       return vibePatternName==='short' ? [60]
@@ -264,7 +252,7 @@
     function resetAll(){
       clearInterval(countdownHandle); countdownHandle=null; countdownActive=false;
       clearInterval(chooseHandle); chooseHandle=null; clearTimeout(chooseTimeout); chooseTimeout=null;
-      touches.clear(); idToNumber.clear(); nextNumber=1; lockedIds=[]; highlightIndex=-1; winnerId=null; particles=[];
+      touches.clear(); idToNumber.clear(); usedNumbers.clear(); lockedIds=[]; highlightIndex=-1; winnerId=null; particles=[];
       state = S_WAITING; updateStatus();
       timerText.textContent = `${countdownDuration.toFixed(1)}s`;
     }
@@ -291,9 +279,10 @@
         ctx.fillStyle = fill; ctx.fill();
         ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff55'; ctx.stroke();
         // Número centrado
+        const num = idToNumber.get(id) || '?';
         ctx.fillStyle = '#fff'; ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(idToNumber.get(id) || '?', t.x, t.y);
+        ctx.fillText(num, t.x, t.y);
 
         // Halo/pulso al resaltado
         if (state===S_CHOOSING && id===lockedIds[highlightIndex]){
@@ -431,7 +420,9 @@
     volInput.addEventListener('input', (e)=>{ volume = parseFloat(volInput.value); if (masterGain) masterGain.gain.value = volume; });
     selPattern.addEventListener('change', (e)=>{ vibePatternName = selPattern.value; });
 
-    updateStatus(); draw();
+    updateStatus();
+    timerText.textContent = `${countdownDuration.toFixed(1)}s`;
+    draw();
 
     // ==== Gestión de números ====
     function allocateNumber(){
