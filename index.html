@@ -10,6 +10,8 @@
   <link rel="apple-touch-icon" href="icon-512.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Fuente retro gamer -->
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
     :root{
       --bg:#0f172a;
@@ -18,25 +20,30 @@
       --dim:#334155; /* jugadores atenuados */
       --winner:#ef4444; /* rojo ganador */
       --accent:#38bdf8;
+      --titleGlow:#f472b6; /* rosa 80s */
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
     #app{position:fixed;inset:0;touch-action:none;}
     canvas{position:absolute;inset:0;display:block;}
 
-    /* ======= HUD como barra superior de borde a borde ======= */
-    .hud{position:absolute;left:0;right:0;top:0;background:var(--panel);
-      border-bottom:1px solid #ffffff22;padding:10px 12px;backdrop-filter:blur(6px);
+    /* ======= Título retro arriba del todo ======= */
+    .titlebar{position:absolute;left:0;right:0;top:0;height:44px;display:flex;align-items:center;justify-content:center;z-index:11}
+    .titlebar .title{
+      font-family:'Press Start 2P', system-ui, monospace;
+      font-size:14px; letter-spacing:1px;
+      text-transform:uppercase;
+      color:#fff;
+      text-shadow:0 0 6px var(--titleGlow), 0 0 14px #9f7aea;
+    }
+
+    /* ======= HUD como barra superior justo debajo del título ======= */
+    .hud{position:absolute;left:0;right:0;top:44px;background:var(--panel);
+      border-bottom:1px solid #ffffff22;padding:8px 12px;backdrop-filter:blur(6px);
       display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10;flex-wrap:wrap}
     .brand{display:flex;align-items:center;gap:10px}
     .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
     .timer{display:flex;align-items:center;gap:6px}
     .timer button{min-width:36px;min-height:32px}
-    .audio{display:flex;align-items:center;gap:6px}
-    .audio input[type="range"]{width:80px}
-    .hud-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-
-    /* Título fuera del HUD */
-    .titlebar{position:absolute;left:0;right:0;top:52px;text-align:center;padding:6px 8px;font-weight:700;opacity:.95;z-index:9}
 
     .controls{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;z-index:5}
     button{appearance:none;border:none;background:var(--accent);color:#0b1220;font-weight:700;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px #0008;cursor:pointer}
@@ -51,24 +58,19 @@
   <div id="app">
     <canvas id="scene"></canvas>
 
-    <!-- HUD superior (solo botones y contador) -->
+    <!-- Título retro fuera del HUD, arriba del todo -->
+    <div class="titlebar"><div class="title">Selector aleatorio de dedos</div></div>
+
+    <!-- HUD superior (solo estado, instalar, vibración/sonido y contador) -->
     <div class="hud">
       <div class="brand">
         <div class="pill" id="status">Esperando toques…</div>
       </div>
-      <div class="hud-right">
-        <button id="btnInstall" class="ghost">Instalar</button>
-        <button id="btnShare" class="ghost">Compartir</button>
-        <div class="pill audio">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button id="btnInstall" class="ghost" style="display:none">Instalar</button>
+        <div class="pill" id="avControls">
           <button id="btnSound" title="Sonido">🔊</button>
           <button id="btnVibrate" title="Vibración">📳</button>
-          <label style="font-size:.9rem;opacity:.9">Vol</label>
-          <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6">
-          <select id="selPattern" title="Patrón vibración">
-            <option value="short">Corto</option>
-            <option value="medium" selected>Medio</option>
-            <option value="long">Largo</option>
-          </select>
         </div>
         <div class="pill timer" id="timer">
           ⏱️ <span id="timeVal">5.0s</span>
@@ -77,9 +79,6 @@
         </div>
       </div>
     </div>
-
-    <!-- Título fuera del HUD -->
-    <div class="titlebar">Selector aleatorio de dedos</div>
 
     <div class="controls">
       <button id="btnStart" class="secondary">Forzar inicio</button>
@@ -93,7 +92,7 @@
   (function(){
     // ===== Service Worker (sube el número para forzar actualización de caché) =====
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('service-worker.js?v=7')
+      navigator.serviceWorker.register('service-worker.js?v=8')
         .then(()=>console.log('SW registrado'))
         .catch(err=>console.error('SW error', err));
     }
@@ -108,11 +107,8 @@
     const btnMinus = document.getElementById('btnMinus');
     const btnPlus = document.getElementById('btnPlus');
     const btnInstall = document.getElementById('btnInstall');
-    const btnShare = document.getElementById('btnShare');
     const btnSound = document.getElementById('btnSound');
     const btnVibrate = document.getElementById('btnVibrate');
-    const volInput = document.getElementById('vol');
-    const selPattern = document.getElementById('selPattern');
 
     const S_WAITING = 'waiting';
     const S_CHOOSING = 'choosing';
@@ -129,7 +125,7 @@
     let countdownHandle = null;
 
     const chooseDurationMs = 5000; // ~5s ruleta
-    let chooseStepMs = 120;
+    const chooseStepMs = 120;
     let chooseHandle = null;
     let chooseTimeout = null;
     let lockedIds = [];
@@ -139,11 +135,9 @@
 
     let particles = [];
 
-    // ===== Sonido y vibración =====
+    // ===== Sonido y vibración (solo toggles) =====
     let soundEnabled = true;
     let vibrationEnabled = true;
-    let volume = parseFloat(volInput.value);
-    let vibePatternName = selPattern.value; // 'short' | 'medium' | 'long'
     let deferredPrompt = null;
     let audioCtx = null, masterGain = null;
 
@@ -152,7 +146,7 @@
       if (!audioCtx){
         audioCtx = new (window.AudioContext||window.webkitAudioContext)();
         masterGain = audioCtx.createGain();
-        masterGain.gain.value = volume;
+        masterGain.gain.value = 0.6; // volumen fijo
         masterGain.connect(audioCtx.destination);
       }
       if (audioCtx.state === 'suspended'){ audioCtx.resume(); }
@@ -164,7 +158,7 @@
       const g = audioCtx.createGain();
       osc.type = 'sine';
       osc.frequency.value = freq;
-      g.gain.value = volume * volMul;
+      g.gain.value = 0.6 * volMul;
       osc.connect(g); g.connect(masterGain);
       const now = audioCtx.currentTime;
       osc.start(now);
@@ -172,11 +166,14 @@
     }
     function playTick(){ playTone(800, 60, 0.35); }
     function playWin(){ playTone(520, 160, 0.9); setTimeout(()=> playTone(880, 220, 1.0), 160); }
-    function getVibePattern(){
-      if (!vibrationEnabled || !('vibrate' in navigator)) return null;
-      return vibePatternName==='short' ? [60]
-           : vibePatternName==='medium'? [80,40,120]
-           : [100,80,100,80,200];
+
+    function vibe(ms=15){
+      if (!vibrationEnabled || !('vibrate' in navigator)) return;
+      try{ navigator.vibrate(ms); }catch(e){}
+    }
+    function vibeWin(){
+      if (!vibrationEnabled || !('vibrate' in navigator)) return;
+      try{ navigator.vibrate([80,40,120]); }catch(e){}
     }
 
     function resize(){
@@ -232,8 +229,9 @@
         if (lockedIds.length === 0) return;
         highlightIndex = (highlightIndex + 1) % lockedIds.length;
         playTick();
+        vibe(15); // vibración corta por cada resaltado
       }, chooseStepMs);
-      chooseTimeout = setTimeout(()=>{ finishAndPickWinner(); }, 5000);
+      chooseTimeout = setTimeout(()=>{ finishAndPickWinner(); }, chooseDurationMs);
     }
 
     function finishAndPickWinner(){
@@ -242,7 +240,7 @@
       const idx = Math.floor(Math.random()*lockedIds.length);
       winnerId = lockedIds[idx];
       state = S_FINISHED; updateStatus();
-      const pat = getVibePattern(); if (pat) try{ navigator.vibrate(pat); }catch(e){}
+      vibeWin();
       playWin();
       const w = touches.get(winnerId); if (w){ spawnConfetti(w.x, w.y); }
       showToast(`¡Ganador: #${idToNumber.get(winnerId)}! 🎉`);
@@ -324,7 +322,7 @@
     function randomColor(){ const hue = Math.floor(Math.random()*360); return `hsl(${hue},70%,50%)`; }
 
     function onTouchStart(ev){
-      if (ev.target.closest('.hud, .controls, button, select, input')) return; // ignora toques en UI
+      if (ev.target.closest('.titlebar, .hud, .controls, button, select, input')) return; // ignora toques en UI
       ev.preventDefault(); ensureAudio();
       const nowFirst = !countdownActive && state===S_WAITING && ev.touches.length>=1 && touches.size===0;
       if (nowFirst) startCountdown();
@@ -339,12 +337,12 @@
       updateStatus();
     }
     function onTouchMove(ev){
-      if (ev.target.closest('.hud, .controls, button, select, input')) return;
+      if (ev.target.closest('.titlebar, .hud, .controls, button, select, input')) return;
       ev.preventDefault(); if (state!==S_WAITING) return;
       for (const t of ev.changedTouches){ const obj = touches.get(t.identifier); if (obj){ obj.x = t.clientX; obj.y = t.clientY; } }
     }
     function onTouchEnd(ev){
-      if (ev.target.closest('.hud, .controls, button, select, input')) return;
+      if (ev.target.closest('.titlebar, .hud, .controls, button, select, input')) return;
       ev.preventDefault();
       for (const t of ev.changedTouches){
         if (state===S_WAITING){
@@ -402,23 +400,6 @@
     });
 
     window.addEventListener('appinstalled', ()=>{ showToast('App instalada ✅'); btnInstall.style.display = 'none'; });
-
-    // -------- Compartir (Web Share API) ---------
-    btnShare.addEventListener('pointerdown', async (e)=>{
-      e.preventDefault(); e.stopPropagation();
-      const shareData = { title: 'Selector de Dedos', text: 'Únete a la selección aleatoria 👇', url: location.href };
-      if (navigator.share){
-        try{ await navigator.share(shareData); }catch(e){}
-      } else if (navigator.clipboard){
-        try{ await navigator.clipboard.writeText(location.href); showToast('Enlace copiado ✅'); }catch(e){ showToast('No se pudo copiar'); }
-      } else { showToast('Comparte esta URL: '+location.href); }
-    });
-
-    // -------- UI sonido/vibración ---------
-    btnSound.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); soundEnabled = !soundEnabled; btnSound.textContent = soundEnabled? '🔊' : '🔇'; if (soundEnabled) ensureAudio(); });
-    btnVibrate.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); vibrationEnabled = !vibrationEnabled; btnVibrate.textContent = vibrationEnabled? '📳' : '🚫'; });
-    volInput.addEventListener('input', (e)=>{ volume = parseFloat(volInput.value); if (masterGain) masterGain.gain.value = volume; });
-    selPattern.addEventListener('change', (e)=>{ vibePatternName = selPattern.value; });
 
     updateStatus();
     timerText.textContent = `${countdownDuration.toFixed(1)}s`;
