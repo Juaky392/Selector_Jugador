@@ -32,6 +32,9 @@
     .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
     .timer{display:flex;align-items:center;gap:6px}
     .timer button{min-width:36px;min-height:32px}
+    .audio{display:flex;align-items:center;gap:6px}
+    .audio input[type="range"]{width:80px}
+    .hud-right{display:flex;align-items:center;gap:10px}
 
     .controls{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;z-index:5}
     button{appearance:none;border:none;background:var(--accent);color:#0b1220;font-weight:700;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px #0008;cursor:pointer}
@@ -52,8 +55,20 @@
         <div class="title">Selector aleatorio de dedos</div>
         <div class="pill" id="status">Esperando toques…</div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px">
+      <div class="hud-right">
         <button id="btnInstall" class="ghost" style="display:none">Instalar</button>
+        <button id="btnShare" class="ghost">Compartir</button>
+        <div class="pill audio">
+          <button id="btnSound" title="Sonido">🔊</button>
+          <button id="btnVibrate" title="Vibración">📳</button>
+          <label style="font-size:.9rem;opacity:.9">Vol</label>
+          <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6">
+          <select id="selPattern" title="Patrón vibración">
+            <option value="short">Corto</option>
+            <option value="medium" selected>Medio</option>
+            <option value="long">Largo</option>
+          </select>
+        </div>
         <div class="pill timer" id="timer">
           ⏱️ <span id="timeVal">5.0s</span>
           <button id="btnMinus" title="-1s">−</button>
@@ -74,7 +89,7 @@
   (function(){
     // ===== Service Worker (versionar para forzar actualización de caché) =====
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('service-worker.js?v=5')
+      navigator.serviceWorker.register('service-worker.js?v=6')
         .then(()=>console.log('SW registrado'))
         .catch(err=>console.error('SW error', err));
     }
@@ -89,6 +104,11 @@
     const btnMinus = document.getElementById('btnMinus');
     const btnPlus = document.getElementById('btnPlus');
     const btnInstall = document.getElementById('btnInstall');
+    const btnShare = document.getElementById('btnShare');
+    const btnSound = document.getElementById('btnSound');
+    const btnVibrate = document.getElementById('btnVibrate');
+    const volInput = document.getElementById('vol');
+    const selPattern = document.getElementById('selPattern');
 
     const S_WAITING = 'waiting';
     const S_CHOOSING = 'choosing';
@@ -105,7 +125,7 @@
     let countdownHandle = null;
 
     const chooseDurationMs = 5000; // ~5s ruleta
-    const chooseStepMs = 120;
+    let chooseStepMs = 120;
     let chooseHandle = null;
     let chooseTimeout = null;
     let lockedIds = [];
@@ -114,6 +134,49 @@
     let winnerId = null;
 
     let particles = [];
+
+    // ===== Sonido y vibración =====
+    let soundEnabled = true;
+    let vibrationEnabled = true;
+    let volume = parseFloat(volInput.value);
+    let vibePatternName = selPattern.value; // 'short' | 'medium' | 'long'
+    let deferredPrompt = null;
+    let audioCtx = null, masterGain = null;
+
+    function ensureAudio(){
+      if (!soundEnabled) return;
+      if (!audioCtx){
+        audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = volume;
+        masterGain.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === 'suspended'){ audioCtx.resume(); }
+    }
+    function playTone(freq=700, ms=80, volMul=1){
+      if (!soundEnabled) return;
+      ensureAudio();
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      g.gain.value = volume * volMul;
+      osc.connect(g); g.connect(masterGain);
+      const now = audioCtx.currentTime;
+      osc.start(now);
+      osc.stop(now + ms/1000);
+    }
+    function playTick(){ playTone(800, 60, 0.35); }
+    function playWin(){
+      playTone(520, 160, 0.9);
+      setTimeout(()=> playTone(880, 220, 1.0), 160);
+    }
+    function getVibePattern(){
+      if (!vibrationEnabled || !('vibrate' in navigator)) return null;
+      return vibePatternName==='short' ? [60]
+           : vibePatternName==='medium'? [80,40,120]
+           : [100,80,100,80,200];
+    }
 
     function resize(){
       const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -167,8 +230,9 @@
       chooseHandle = setInterval(()=>{
         if (lockedIds.length === 0) return;
         highlightIndex = (highlightIndex + 1) % lockedIds.length;
+        playTick();
       }, chooseStepMs);
-      chooseTimeout = setTimeout(()=>{ finishAndPickWinner(); }, chooseDurationMs);
+      chooseTimeout = setTimeout(()=>{ finishAndPickWinner(); }, 5000);
     }
 
     function finishAndPickWinner(){
@@ -177,7 +241,8 @@
       const idx = Math.floor(Math.random()*lockedIds.length);
       winnerId = lockedIds[idx];
       state = S_FINISHED; updateStatus();
-      if (navigator.vibrate){ try{ navigator.vibrate([80,40,120]); }catch(e){} }
+      const pat = getVibePattern(); if (pat) try{ navigator.vibrate(pat); }catch(e){}
+      playWin();
       const w = touches.get(winnerId); if (w){ spawnConfetti(w.x, w.y); }
       showToast(`¡Ganador: #${idToNumber.get(winnerId)}! 🎉`);
     }
@@ -198,10 +263,13 @@
       g.addColorStop(0,'#0b1220'); g.addColorStop(1,'#0a0f1d');
       ctx.fillStyle = g; ctx.fillRect(0,0,innerWidth,innerHeight);
 
+      const now = performance.now();
       for (const [id, t] of touches){
         if (state!==S_WAITING && !lockedIds.includes(id)) continue;
         const r = 36;
+        // Sombra
         ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(t.x, t.y+4, r, 0, Math.PI*2); ctx.fillStyle = '#0008'; ctx.fill(); ctx.globalAlpha = 1;
+        // Círculo
         ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2);
         let fill;
         if (state===S_WAITING){ fill = t.color; }
@@ -209,9 +277,21 @@
         else { fill = (id===winnerId) ? getCssVar('--winner') : getCssVar('--dim'); }
         ctx.fillStyle = fill; ctx.fill();
         ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff55'; ctx.stroke();
+        // Número centrado
         ctx.fillStyle = '#fff'; ctx.font = '700 22px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(idToNumber.get(id) || '?', t.x, t.y);
+
+        // Halo/pulso al resaltado
+        if (state===S_CHOOSING && id===lockedIds[highlightIndex]){
+          const pulse = (Math.sin(now/200)+1)/2; // 0..1
+          ctx.save();
+          ctx.beginPath(); ctx.arc(t.x, t.y, r + 6 + 8*pulse, 0, Math.PI*2);
+          ctx.lineWidth = 4 + 2*pulse; ctx.globalAlpha = 0.35 + 0.25*pulse;
+          ctx.shadowBlur = 20 + 20*pulse; ctx.shadowColor = t.color;
+          ctx.strokeStyle = t.color; ctx.stroke();
+          ctx.restore(); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        }
       }
 
       stepParticles();
@@ -242,8 +322,8 @@
     function randomColor(){ const hue = Math.floor(Math.random()*360); return `hsl(${hue},70%,50%)`; }
 
     function onTouchStart(ev){
-      if (ev.target.closest('.hud, .controls, button')) return; // ignora toques en UI
-      ev.preventDefault();
+      if (ev.target.closest('.hud, .controls, button, select, input')) return; // ignora toques en UI
+      ev.preventDefault(); ensureAudio();
       const nowFirst = !countdownActive && state===S_WAITING && ev.touches.length>=1 && touches.size===0;
       if (nowFirst) startCountdown();
       for (const t of ev.changedTouches){
@@ -254,12 +334,12 @@
       updateStatus();
     }
     function onTouchMove(ev){
-      if (ev.target.closest('.hud, .controls, button')) return;
+      if (ev.target.closest('.hud, .controls, button, select, input')) return;
       ev.preventDefault(); if (state!==S_WAITING) return;
       for (const t of ev.changedTouches){ const obj = touches.get(t.identifier); if (obj){ obj.x = t.clientX; obj.y = t.clientY; } }
     }
     function onTouchEnd(ev){
-      if (ev.target.closest('.hud, .controls, button')) return;
+      if (ev.target.closest('.hud, .controls, button, select, input')) return;
       ev.preventDefault();
       for (const t of ev.changedTouches){ if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); } }
       updateStatus();
@@ -270,22 +350,29 @@
     app.addEventListener('touchend', onTouchEnd, {passive:false});
     app.addEventListener('touchcancel', onTouchEnd, {passive:false});
 
-    // -------- Botones (Pointer Events) ---------
+    // -------- Botones (Pointer + autorepetición) ---------
     function adjTime(delta){
       countdownDuration = Math.max(1, Math.min(60, countdownDuration + delta));
       if (!countdownActive) timerText.textContent = `${countdownDuration.toFixed(1)}s`;
     }
-    function bindPointer(btn, delta){
-      btn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); adjTime(delta); });
+    function bindHold(btn, delta){
+      let holdT=null, repI=null;
+      btn.addEventListener('pointerdown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        adjTime(delta);
+        holdT = setTimeout(()=>{ repI = setInterval(()=> adjTime(delta), 80); }, 350);
+      });
+      const clear=()=>{ if(holdT){clearTimeout(holdT);holdT=null;} if(repI){clearInterval(repI);repI=null;} };
+      ['pointerup','pointercancel','pointerleave'].forEach(evt=> btn.addEventListener(evt, clear));
+      window.addEventListener('pointerup', clear);
     }
-    bindPointer(btnMinus, -1);
-    bindPointer(btnPlus, +1);
+    bindHold(btnMinus, -1);
+    bindHold(btnPlus, +1);
 
     btnStart.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); if (state===S_WAITING){ startCountdown(); } });
     btnReset.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); resetAll(); });
 
     // -------- Instalación (beforeinstallprompt) ---------
-    let deferredPrompt = null;
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
     window.addEventListener('beforeinstallprompt', (e)=>{
@@ -294,20 +381,33 @@
       if (!isStandalone) btnInstall.style.display = 'inline-flex';
     });
 
-    btnInstall.addEventListener('pointerdown', async (e)=>{
+    btnInstall.addEventListener('click', async (e)=>{
       e.preventDefault(); e.stopPropagation();
-      if (!deferredPrompt) return;
+      if (!deferredPrompt) { showToast('Si no aparece el cuadro, usa ⋮ → Añadir a pantalla principal'); return; }
       deferredPrompt.prompt();
       const res = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      btnInstall.style.display = 'none';
+      deferredPrompt = null; btnInstall.style.display = 'none';
       if (res && res.outcome === 'accepted'){ showToast('Instalación iniciada ✅'); }
     });
 
-    window.addEventListener('appinstalled', ()=>{
-      showToast('App instalada ✅');
-      btnInstall.style.display = 'none';
+    window.addEventListener('appinstalled', ()=>{ showToast('App instalada ✅'); btnInstall.style.display = 'none'; });
+
+    // -------- Compartir (Web Share API) ---------
+    btnShare.addEventListener('pointerdown', async (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const shareData = { title: 'Selector de Dedos', text: 'Únete a la selección aleatoria 👇', url: location.href };
+      if (navigator.share){
+        try{ await navigator.share(shareData); }catch(e){}
+      } else if (navigator.clipboard){
+        try{ await navigator.clipboard.writeText(location.href); showToast('Enlace copiado ✅'); }catch(e){ showToast('No se pudo copiar'); }
+      } else { showToast('Comparte esta URL: '+location.href); }
     });
+
+    // -------- UI sonido/vibración ---------
+    btnSound.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); soundEnabled = !soundEnabled; btnSound.textContent = soundEnabled? '🔊' : '🔇'; if (soundEnabled) ensureAudio(); });
+    btnVibrate.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); vibrationEnabled = !vibrationEnabled; btnVibrate.textContent = vibrationEnabled? '📳' : '🚫'; });
+    volInput.addEventListener('input', (e)=>{ volume = parseFloat(volInput.value); if (masterGain) masterGain.gain.value = volume; });
+    selPattern.addEventListener('change', (e)=>{ vibePatternName = selPattern.value; });
 
     updateStatus(); draw();
   })();
