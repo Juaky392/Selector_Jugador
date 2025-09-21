@@ -27,6 +27,15 @@
     .hud{position:absolute;left:0;right:0;top:0;background:var(--panel);
       border-bottom:1px solid #ffffff22;padding:10px 12px;backdrop-filter:blur(6px);
       display:flex;align-items:center;gap:10px;justify-content:space-between;z-index:10}
+    .titlebar{position:absolute;left:0;right:0;top:52px;text-align:center;padding:6px 8px;font-weight:700;opacity:.95;z-index:9}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+    .brand .title{display:none} /* se oculta el título del HUD */
+    .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
+    .timer{display:flex;align-items:center;gap:6px}
+    .timer button{min-width:36px;min-height:32px}
+    .audio{display:flex;align-items:center;gap:6px}
+    .audio input[type="range"]{width:80px}
+    .hud-right{display:flex;align-items:center;gap:10px}
     .brand{display:flex;align-items:center;gap:10px;font-weight:700}
     .brand .title{font-weight:700;letter-spacing:.2px}
     .pill{padding:6px 10px;border-radius:10px;border:1px solid #ffffff22;background:#ffffff10;display:flex;align-items:center;gap:8px}
@@ -52,7 +61,8 @@
     <!-- HUD superior -->
     <div class="hud">
       <div class="brand">
-        <div class="title">Selector aleatorio de dedos</div>
+        <div class="pill" id="status">Esperando toques…</div>
+      </div>
         <div class="pill" id="status">Esperando toques…</div>
       </div>
       <div class="hud-right">
@@ -76,6 +86,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Título fuera del HUD -->
+    <div class="titlebar">Selector aleatorio de dedos</div>
 
     <div class="controls">
       <button id="btnStart" class="secondary">Forzar inicio</button>
@@ -117,7 +130,7 @@
     let state = S_WAITING;
     let touches = new Map(); // id -> {x,y,color,number}
     let idToNumber = new Map();
-    let nextNumber = 1;
+    let usedNumbers = new Set(); // números actualmente asignados
 
     let countdownDuration = 5.0;
     let countdown = countdownDuration;
@@ -328,7 +341,10 @@
       if (nowFirst) startCountdown();
       for (const t of ev.changedTouches){
         if (state!==S_WAITING) continue;
-        if (!idToNumber.has(t.identifier)) idToNumber.set(t.identifier, nextNumber++);
+        if (!idToNumber.has(t.identifier)) {
+          const num = allocateNumber();
+          idToNumber.set(t.identifier, num);
+        }
         touches.set(t.identifier, {x:t.clientX, y:t.clientY, color:randomColor()});
       }
       updateStatus();
@@ -341,7 +357,13 @@
     function onTouchEnd(ev){
       if (ev.target.closest('.hud, .controls, button, select, input')) return;
       ev.preventDefault();
-      for (const t of ev.changedTouches){ if (state===S_WAITING){ touches.delete(t.identifier); idToNumber.delete(t.identifier); } }
+      for (const t of ev.changedTouches){
+        if (state===S_WAITING){
+          const num = idToNumber.get(t.identifier);
+          if (num){ usedNumbers.delete(num); }
+          touches.delete(t.identifier); idToNumber.delete(t.identifier);
+        }
+      }
       updateStatus();
     }
 
@@ -410,6 +432,14 @@
     selPattern.addEventListener('change', (e)=>{ vibePatternName = selPattern.value; });
 
     updateStatus(); draw();
+
+    // ==== Gestión de números ====
+    function allocateNumber(){
+      let n = 1;
+      while (usedNumbers.has(n)) n++;
+      usedNumbers.add(n);
+      return n;
+    }
   })();
   </script>
 </body>
